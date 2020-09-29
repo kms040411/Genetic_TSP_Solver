@@ -1,8 +1,8 @@
 # Genetic_TSP_Solver
-A traveling salesman problem solver with genetic algorithm
+A travelling salesman problem solver with genetic algorithm
 
 ### Usage
-```sh
+```
 usage: tsp_solver.py [-h] [--output_file OUTPUT_FILE] [-p POPULATION] [-f FITNESS_EVALUATIONS] [-c CONVERGENCE_FACTOR] [-s SELECT_RANK] [-r REPLACE_RANK] [--criteria STOPPING_CRITERIA]
                      [-m MUTATION_FACTOR] [-j JOBS]
                      Target_file
