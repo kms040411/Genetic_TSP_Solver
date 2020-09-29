@@ -2,6 +2,7 @@ import sys
 import math
 import random
 import argparse
+import optimistic_lock as ol
 
 # Initial Config & Runtime data
 config = {
@@ -21,6 +22,7 @@ config = {
     "dimension" : 0,                # How many nodes are there?
     "Coordinates" : None,
     "Distance_table" : None,
+    "table_lock" : None,            # Optimistic sequence lock for distance_table
 }
 
 class Coordinate():
@@ -29,19 +31,26 @@ class Coordinate():
         self.x = x
         self.y = y
     
-    def distance(self, other, distance_table):
-        if distance_table[self.num-1][other.num-1] != distance_table[other.num-1][self.num-1]:
-            print("Coordinate-distance(): table error")
-            exit(-1)
-        if distance_table[self.num-1][other.num-1] is None:
+    def distance(self, other, distance_table, lock):
+        seq = lock.read_lock()
+        t = None
+        while True:
+            t = distance_table[self.num-1][other.num-1]
+            if lock.validate(seq):
+                break
+        if t is None:
             a = abs(self.x - other.x) ** 2
             b = abs(self.y - other.y) ** 2
             distance = math.sqrt(a + b)
+
+            write_seq = lock.write_lock()
             distance_table[self.num - 1][other.num - 1] = distance
             distance_table[other.num - 1][self.num - 1] = distance
+            lock.unlock(write_seq)
+            
             return distance
         else:
-            return distance_table[self.num-1][other.num-1]
+            return t
         
 
 class Gene():
@@ -114,7 +123,7 @@ class Gene():
                 a = coordinates[i]
                 continue
             b = coordinates[i]
-            sum = sum + a.distance(b, self.config['Distance_table'])
+            sum = sum + a.distance(b, self.config['Distance_table'], self.config['table_lock'])
             a = b
         return sum
 
@@ -220,6 +229,7 @@ def build_distance_table(config):
     dimension = config["dimension"]
     table = [[None for col in range(dimension)] for row in range(dimension)]
     config['Distance_table'] = table
+    config["table_lock"] = ol.Optimistic_lock()
     return
 
 def ga(coordinates, config):
