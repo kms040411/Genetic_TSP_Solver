@@ -3,24 +3,24 @@ import math
 import random
 import argparse
 
-# Initial Config
+# Initial Config & Runtime data
 config = {
-    "debug" : True,                 # Debug mode
     "file_name" : None,             # Target tsp file name
+    "Output_file" : "solution.csv", # Output file name
 
-    "population" : 0,              # How many genes are in the pool?
-    "fitness_evalutaions" : 10,
+    "population" : 50,              # How many genes are in the pool?
+    "fitness_evaluations" : 10000,  # The total number of fitness calculation (The program will exit after calculating beyond this number)
     "mutation_factor" : 5,          # How many factors of the gene will be mutated? (Per a mutation function called)
     "convergence_factor" : 1,       # How fast the number of randomly generated genes reduce? (Per a generation)
     "select_ranking" : 0.5,         # How many parents will be selected?
     "replace_ranking" : 0.2,        # How many parents will be replaced?
-    "stopping_criteria" : 10,       # How many generations can pass without improving fitness?
+    "stopping_criteria" : 2000,     # How many generations can pass without improving fitness?
+    "total_jobs" : 1,               # How many threads will calculate fitness?
 
     # Runtime Data
     "dimension" : 0,                # How many nodes are there?
     "Coordinates" : None,
     "Distance_table" : None,
-    "current_random_genes" : 0,
 }
 
 class Coordinate():
@@ -62,7 +62,6 @@ class Gene():
         return self.calculated_fitness
 
     def __repr__(self):
-        #return str(self.gene)
         return str(self.calculated_fitness)
     
     def __lt__(self, other):
@@ -100,7 +99,6 @@ class Gene():
             if i not in base_list:
                 base_list.append(i)
         child = Gene(travel_list=base_list, config=self.config)
-        #print(child)
         if child.dimension != gene_length:
             print("Crossover: The length of the child is different")
             exit(-1)
@@ -118,7 +116,6 @@ class Gene():
             b = coordinates[i]
             sum = sum + a.distance(b, self.config['Distance_table'])
             a = b
-        #print(sum)
         return sum
 
 class Pool():
@@ -142,7 +139,6 @@ class Pool():
     def fill_random_gene(self, num):
         for i in range(num):
             new_gene = Gene(dimension=self.dimension, config=self.config)
-            #print(new_gene)
             self.pool.append(new_gene)
         return
 
@@ -159,11 +155,18 @@ class Pool():
         current_best_gene = None
         population = self.config["population"]
         random_num = population
-        while(True):
+        stopping_counter = self.config["stopping_criteria"]
+        remain_fitness_evaluations = self.config["fitness_evaluations"]
+
+        while(stopping_counter > 0):
             print("Generation: ", generation)
 
             # Sort the genes of the pool high to low fitness
             self.pool.sort(reverse=True)
+            if self.pool[0] == current_best_gene:
+                stopping_counter -= 1
+            else:
+                stopping_counter = self.config["stopping_criteria"]
             current_best_gene = self.pool[0]
             print("Current Best Gene: ", current_best_gene)
 
@@ -179,6 +182,11 @@ class Pool():
             if selected_parents is not None:
                 self.crossover(selected_parents, select_num, replace_num)
             generation += 1
+
+            remain_fitness_evaluations -= int(replace_num + random_num)
+            if remain_fitness_evaluations <= 0:
+                break
+        return current_best_gene
 
     def crossover(self, selected_parents, select_num, replace_num):
         while replace_num > 0:
@@ -204,6 +212,9 @@ def tsp(config):
         exit(-1)
     build_distance_table(config)
     result = ga(coordinates, config)
+    print("Result: ", result.gene)
+    print_file(result, config)
+    return
 
 def build_distance_table(config):
     dimension = config["dimension"]
@@ -214,7 +225,8 @@ def build_distance_table(config):
 def ga(coordinates, config):
     config["coordinates"] = coordinates
     new_pool = Pool(config)
-    new_pool.generation()
+    best_gene = new_pool.generation()
+    return best_gene
 
 #################################################################
 def read_file(config):
@@ -225,7 +237,9 @@ def read_file(config):
         type_ = f.readline()        # TYPE
         dimension = f.readline()    # DIMENSION
         edge_weight_type = f.readline() # EDGE_WEIGHT_TYPE
-        _ = f.readline()            # NODE_COORD_SECTION
+        temp = ""
+        while temp != "NODE_COORD_SECTION\n":
+            temp = f.readline()            # loop until find NODE_COORD_SECTION
 
         dimension = dimension.split()
         dimension = dimension[2]
@@ -236,31 +250,46 @@ def read_file(config):
             num = int(string[0])
             x = float(string[1])
             y = float(string[2])
-            #d_print(str(num) + ", " + str(x) + ", " + str(y))
             coordinates[num] = Coordinate(num, x, y)
         if("EOF\n" != f.readline()): # EOF
             raise Exception
     return coordinates
 
-def d_print(string):
-    if config["debug"]:
-        print(str(string))
+def print_file(result, config):
+    with open(config["Output_file"], "w") as f:
+        for i in result.gene:
+            f.write(str(i) + "\n")
+    return
 
-def define_argparse():
+def define_argparse(config):
     parser = argparse.ArgumentParser(description="Travelling Salesman Problem solver")
     parser.add_argument("Target_file", type=str, help="Target file name")
-    parser.add_argument('-p', type=int, help="Population", dest="population", default=50)
-    parser.add_argument('-f', type=int, help="Fitness evaluations", dest="fitness_evaluations", default=10)
+    parser.add_argument("--output_file", type=str, help="Output file name", default=config["Output_file"])
+    parser.add_argument('-p', type=int, help="How many genes are in the pool?", dest="population", default=config["population"])
+    parser.add_argument('-f', type=int, help="The total number of fitness calculation (The program will exit after calculating beyond this number)", dest="fitness_evaluations", default=config["fitness_evaluations"])
+    parser.add_argument('-c', type=int, help="How fast the number of randomly generated genes reduces? (Per a generation)", dest="convergence_factor", default=config["convergence_factor"])
+    parser.add_argument('-s', type=float, help="How many parents will be selected? (format=0.XXX)", dest="select_rank", default=config["select_ranking"])
+    parser.add_argument('-r', type=float, help="How many parents will be replaced? (format=0.XXX)", dest="replace_rank", default=config["replace_ranking"])
+    parser.add_argument('--criteria', type=int, help="How many generations can pass without improving fitness?", dest="stopping_criteria", default=config["stopping_criteria"])
+    parser.add_argument('-m', type=int, help="How many factors of the gene will be mutated? (Per a mutation function called)", dest="mutation_factor", default=config["mutation_factor"])
+    parser.add_argument('-j', type=int, help="How many threads will calculate fitness?", dest="jobs", default=config["total_jobs"])
     return parser
 
 def parse_options(config, parser):
     args = parser.parse_args()
     config["file_name"] = args.Target_file
+    config["Output_file"] = args.output_file
     config["population"] = args.population
-    config["fitness_evalutions"] = args.fitness_evaluations
+    config["fitness_evaluations"] = args.fitness_evaluations
+    config["convergence_factor"] = args.convergence_factor
+    config["select_ranking"] = args.select_rank
+    config["replace_ranking"] = args.replace_rank
+    config["stopping_criteria"] = args.stopping_criteria
+    config["mutation_factor"] = args.mutation_factor
+    config["total_jobs"] = args.jobs
     return config
 
 if __name__ == "__main__":
-    parser = define_argparse()
+    parser = define_argparse(config)
     config = parse_options(config, parser)
     tsp(config)
