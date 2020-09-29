@@ -3,6 +3,8 @@ import math
 import random
 import argparse
 import optimistic_lock as ol
+import threading
+from multiprocessing import Process, Queue
 
 # Initial Config & Runtime data
 config = {
@@ -47,11 +49,10 @@ class Coordinate():
             distance_table[self.num - 1][other.num - 1] = distance
             distance_table[other.num - 1][self.num - 1] = distance
             lock.unlock(write_seq)
-            
+
             return distance
         else:
             return t
-        
 
 class Gene():
     def __init__(self, travel_list=None, dimension=-1, config=None):
@@ -127,29 +128,54 @@ class Gene():
             a = b
         return sum
 
+def threaded_create_random_pool(num, p):
+    for i in range(num):
+        new_gene = Gene(dimension=p.dimension, config=p.config)
+        p.pool.append(new_gene)
+
 class Pool():
     def __init__(self, config):
         self.config = config
+        self.lock = threading.Lock()
         self.population = config["population"]
         self.dimension = config["dimension"]
         self.pool = list()
         self.create_random_pool()
 
+    # Multi-threaded func
     def create_random_pool(self):
-        for i in range(self.population):
-            new_gene = Gene(dimension=self.dimension, config=self.config)
-            self.pool.append(new_gene)
+        jobs = self.config["total_jobs"]
+        population_per_job = int(self.population / jobs)
+        remain = self.population - population_per_job * jobs
+        job_list = [population_per_job for i in range(jobs)]
+        job_list[-1] += remain
+        threads = list()
+        for i in range(jobs):
+            t = threading.Thread(target=threaded_create_random_pool, args=(job_list[i], self))
+            threads.append(t)
+            t.start()
+        for i in threads:
+            t.join()
 
     def replace(self, num):
         for i in range(num):
             self.pool.pop(-1)
         return
 
+    # Multi-threaded func
     def fill_random_gene(self, num):
-        for i in range(num):
-            new_gene = Gene(dimension=self.dimension, config=self.config)
-            self.pool.append(new_gene)
-        return
+        jobs = self.config["total_jobs"]
+        population_per_job = int(num / jobs)
+        remain = num - population_per_job * jobs
+        job_list = [population_per_job for i in range(jobs)]
+        job_list[-1] += remain
+        threads = list()
+        for i in range(jobs):
+            t = threading.Thread(target=threaded_create_random_pool, args=(job_list[i], self))
+            threads.append(t)
+            t.start()
+        for i in threads:
+            t.join()
 
     def select(self, num):
         if num <= 1:
@@ -195,6 +221,11 @@ class Pool():
             remain_fitness_evaluations -= int(replace_num + random_num)
             if remain_fitness_evaluations <= 0:
                 break
+            
+            # Check invariant
+            if self.population != len(self.pool):
+                print("Population changed")
+                exit(-1)
         return current_best_gene
 
     def crossover(self, selected_parents, select_num, replace_num):
