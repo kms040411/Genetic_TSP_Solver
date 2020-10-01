@@ -1,4 +1,5 @@
 import sys
+import os
 import math
 import random
 import argparse
@@ -251,7 +252,9 @@ class Pool():
             if self.pool[0] == current_best_gene:
                 stopping_counter -= 1
             else:
+                # Algorithm found better genes
                 stopping_counter = self.config["stopping_criteria"]
+                # @TODO: Save current pool
             current_best_gene = self.pool[0]
             print("Current Best Gene: ", current_best_gene)
 
@@ -311,10 +314,36 @@ def fill_distance_table(config):
     table = config['Distance_table']
     dimension = config["dimension"]
     coordinates = config["Coordinates"]
+
+    # Check distance table
+    fname = "./" + config['file_name'] + "_data/distance_table.table"
+    if os.path.isfile(fname):
+        # File exists
+        print("Found & Reading Distance table")
+        with open(fname, "r") as f:
+            delta = 1 / (dimension) * 100
+            progress = 0
+            for i in range(1, dimension + 1):
+                progress += delta
+                print("Progess: ", round(progress, 2), "%", end="")
+                line = f.readline()
+                splited = line.split()
+                j_index = 1
+                for j in splited:
+                    distance = float(j)
+                    table[i - 1][j_index - 1] = distance
+                    table[j_index - 1][i - 1] = distance
+                    j_index += 1
+                print("\r", end="")
+        print("\nDone")
+        return
+
+    # Fill distance table
     print("Filling Distance table...")
-    progress = 1 / (dimension) * 100
+    delta = 1 / (dimension) * 100
+    progress = 0
     for i in range(1, dimension + 1):
-        progress += progress
+        progress += delta
         print("Progess: ", round(progress, 2), "%", end="")
         a = coordinates[i]
         for j in range(i, dimension + 1):
@@ -324,7 +353,23 @@ def fill_distance_table(config):
             table[j - 1][i - 1] = distance
         print("\r", end="")
     print("Done")
+    os.makedirs("./" + config['file_name'] + "_data", exist_ok=True)
 
+    # Save distance table
+    print("Saving Distance table...")
+    with open(fname, "w") as f:
+        delta = 1 / (dimension) * 100
+        progress = 0
+        for i in range(1, dimension + 1):
+            progress += delta
+            print("Progess: ", round(progress, 2), "%", end="")
+            line = ""
+            for j in range(1, dimension + 1):
+                line = line + str(table[i - 1][j - 1]) + " "
+            line = line + "\n"
+            print("\r", end="")
+            f.write(line)
+    print("Done")
 
 def build_distance_table(config):
     dimension = config["dimension"]
@@ -337,6 +382,7 @@ def build_distance_table(config):
     return
 
 def ga(config):
+    # @TODO: Check whether best pool exists, if so, load it
     new_pool = Pool(config)
     best_gene = new_pool.generation()
     return best_gene
