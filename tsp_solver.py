@@ -13,10 +13,10 @@ config = {
 
     "population" : 50,              # How many genes are in the pool?
     "fitness_evaluations" : 10000,  # The total number of fitness calculation (The program will exit after calculating beyond this number)
-    "mutation_factor" : 5,          # How many factors of the gene will be mutated? (Per a mutation function called)
-    "convergence_factor" : 1,       # How fast the number of randomly generated genes reduce? (Per a generation)
-    "select_ranking" : 0.5,         # How many parents will be selected?
-    "replace_ranking" : 0.2,        # How many parents will be replaced?
+    "mutation_factor" : 3,          # How many factors of the gene will be mutated? (Per a mutation function called)
+    "convergence_factor" : 10,       # How fast the number of randomly generated genes reduce? (Per a generation)
+    "select_ranking" : 0.3,         # How many parents will be selected?
+    "replace_ranking" : 0.5,        # How many parents will be replaced?
     "stopping_criteria" : 2000,     # How many generations can pass without improving fitness?
     "total_jobs" : 1,               # How many threads will calculate fitness?
 
@@ -34,12 +34,14 @@ class Coordinate():
         self.y = y
     
     def distance(self, other, distance_table, lock):
+        #return distance_table[self.num-1][other.num-1]
         seq = lock.read_lock()
         t = None
         while True:
             t = distance_table[self.num-1][other.num-1]
             if lock.validate(seq):
                 break
+            seq = lock.read_lock()
         if t is None:
             a = abs(self.x - other.x) ** 2
             b = abs(self.y - other.y) ** 2
@@ -56,6 +58,7 @@ class Coordinate():
 
 class Gene():
     def __init__(self, travel_list=None, dimension=-1, config=None):
+        self.config = config
         if travel_list is not None:
             self.gene = travel_list
             self.dimension = len(travel_list)
@@ -64,8 +67,8 @@ class Gene():
                 print("No Specified Dimension when Generating a Gene")
                 exit(-1)
             self.dimension = dimension
-            self.__random_generate()
-        self.config = config
+            #self.__random_generate()
+            self.__greedy_generate()
         self.calculated_fitness = self.calc_fitness()
 
     def get_fitness(self):
@@ -83,6 +86,41 @@ class Gene():
         random.seed()
         random.shuffle(self.gene)
         return
+
+    def __greedy_generate(self):
+        random.seed()
+        start_point = random.randrange(1, self.dimension + 1)
+        self.gene = list()
+        self.gene.append(start_point)
+        gene_len = 1
+        distance_table = self.config["Distance_table"]
+
+        current_point = start_point
+        visited = [False for i in range(self.dimension + 1)]
+        visited[current_point] = True     # Mark start_point as visited
+
+        while gene_len < self.dimension:
+            min_index = None
+            min_distance = None
+            for i in range(1, self.dimension + 1):
+                if visited[i]:
+                    continue
+                if min_index is None:
+                    min_index = i
+                    min_distance = distance_table[current_point - 1][i - 1]
+                    continue
+                current_distance = distance_table[current_point - 1][i - 1]
+                if current_distance < min_distance:
+                    current_index = i
+                    min_distance = current_distance
+
+            #if min_index is None:
+            #    break
+            current_point = min_index
+            self.gene.append(current_point)
+            visited[current_point] = True
+            gene_len += 1
+
     
     # Mutate the gene itself
     # Should be called after crossover()
@@ -115,7 +153,7 @@ class Gene():
         return child
 
     def calc_fitness(self):
-        coordinates = self.config["coordinates"]
+        coordinates = self.config["Coordinates"]
         sum = 0
         a = None
         b = None
@@ -131,7 +169,8 @@ class Gene():
 def threaded_create_random_pool(num, p):
     for i in range(num):
         new_gene = Gene(dimension=p.dimension, config=p.config)
-        p.pool.append(new_gene)
+        with p.lock:
+            p.pool.append(new_gene)
 
 class Pool():
     def __init__(self, config):
@@ -145,6 +184,12 @@ class Pool():
     # Multi-threaded func
     def create_random_pool(self):
         jobs = self.config["total_jobs"]
+        if jobs == 1:
+            for i in range(self.population):
+                new_gene = Gene(dimension=self.dimension, config=self.config)
+                print(new_gene.get_fitness())
+                self.pool.append(new_gene)
+            return
         population_per_job = int(self.population / jobs)
         remain = self.population - population_per_job * jobs
         job_list = [population_per_job for i in range(jobs)]
@@ -165,6 +210,11 @@ class Pool():
     # Multi-threaded func
     def fill_random_gene(self, num):
         jobs = self.config["total_jobs"]
+        if jobs == 1:
+            for i in range(num):
+                new_gene = Gene(dimension=self.dimension, config=self.config)
+                self.pool.append(new_gene)
+            return
         population_per_job = int(num / jobs)
         remain = num - population_per_job * jobs
         job_list = [population_per_job for i in range(jobs)]
@@ -250,27 +300,50 @@ def tsp(config):
     except Exception as e:
         print("Error when reading a file: EOF error")
         exit(-1)
+    config["Coordinates"] = coordinates
     build_distance_table(config)
-    result = ga(coordinates, config)
+    result = ga(config)
     print("Result: ", result.gene)
     print_file(result, config)
     return
 
+def fill_distance_table(config):
+    table = config['Distance_table']
+    dimension = config["dimension"]
+    coordinates = config["Coordinates"]
+    print("Filling Distance table...")
+    progress = 1 / (dimension) * 100
+    for i in range(1, dimension + 1):
+        progress += progress
+        print("Progess: ", round(progress, 2), "%", end="")
+        a = coordinates[i]
+        for j in range(i, dimension + 1):
+            b = coordinates[j]
+            distance = a.distance(b, table, config['table_lock'])
+            table[i - 1][j - 1] = distance
+            table[j - 1][i - 1] = distance
+        print("\r", end="")
+    print("Done")
+
+
 def build_distance_table(config):
     dimension = config["dimension"]
+    print("Building empty table...")
     table = [[None for col in range(dimension)] for row in range(dimension)]
+    print("Done")
     config['Distance_table'] = table
     config["table_lock"] = ol.Optimistic_lock()
+    fill_distance_table(config)
     return
 
-def ga(coordinates, config):
-    config["coordinates"] = coordinates
+def ga(config):
     new_pool = Pool(config)
     best_gene = new_pool.generation()
     return best_gene
 
 #################################################################
 def read_file(config):
+    print("Reading given file...")
     coordinates = dict()
     with open(config["file_name"], "r") as f:
         name = f.readline()         # NAME
@@ -294,6 +367,7 @@ def read_file(config):
             coordinates[num] = Coordinate(num, x, y)
         if("EOF\n" != f.readline()): # EOF
             raise Exception
+    print("Done")
     return coordinates
 
 def print_file(result, config):

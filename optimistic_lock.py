@@ -40,7 +40,7 @@ class Optimistic_lock():
                 continue
             return a
 
-    # Do not use
+    # DO NOT USE this function
     def upgrade(self, seq) -> bool:
         if seq % 2 != 0:
             print("upgrade: seq should be even")
