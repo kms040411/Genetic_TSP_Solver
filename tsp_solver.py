@@ -11,7 +11,6 @@ from multiprocessing import Process, Queue
 config = {
     "file_name" : None,             # Target tsp file name
     "Output_file" : "solution.csv", # Output file name
-    "resume" : False,                # Resume from the previous best gene
 
     "population" : 50,              # How many genes are in the pool?
     "fitness_evaluations" : 10000,  # The total number of fitness calculation (The program will exit after calculating beyond this number)
@@ -179,7 +178,7 @@ def threaded_create_random_pool(num, p):
             p.pool.append(new_gene)
 
 class Pool():
-    def __init__(self, config, resume=False):
+    def __init__(self, config):
         self.config = config
         self.lock = threading.Lock()
         self.population = config["population"]
@@ -187,9 +186,8 @@ class Pool():
         self.pool = list()
         self.create_random_pool()
         self.init_generation = 0
-        if resume:
-            self.resume_pool()
 
+    '''
     def resume_pool(self):
         print("Resuming pool from the last gene...")
         dir_name = "./" + config['file_name'] + "_data"
@@ -210,18 +208,19 @@ class Pool():
 
         best_gene = Gene(travel_list=last_gene, config=self.config)
         print("Previous Best Gene: ", best_gene.get_fitness())
-        '''self.pool.append(best_gene)
+        self.pool.append(best_gene)
         for i in range(self.population - 1):
             gene = Gene(travel_list=last_gene[:], config=self.config)
             gene.mutate(30)
             self.pool.append(gene)
-        config["convergence_factor"] = config["population"]'''
+        config["convergence_factor"] = config["population"]
 
         self.pool.sort(reverse=True)
         self.pool[-1] = best_gene
 
         self.init_generation = last_generation + 1
         print("Done")
+    '''
 
     # Multi-threaded func
     def create_random_pool(self):
@@ -392,7 +391,7 @@ def build_distance_table(config):
 
 def ga(config):
     # @TODO: Check whether best pool exists, if so, load it
-    new_pool = Pool(config, config["resume"])
+    new_pool = Pool(config)
     best_gene = new_pool.generation()
     return best_gene
 
@@ -443,7 +442,6 @@ def define_argparse(config):
     parser.add_argument('--criteria', type=int, help="How many generations can pass without improving fitness?", dest="stopping_criteria", default=config["stopping_criteria"])
     parser.add_argument('-m', type=int, help="How many factors of the gene will be mutated? (Per a mutation function called)", dest="mutation_factor", default=config["mutation_factor"])
     parser.add_argument('-j', type=int, help="How many threads will calculate fitness?", dest="jobs", default=config["total_jobs"])
-    parser.add_argument('--resume', help="Resume from the previous best gene", dest="resume", action="store_true", default=False)
     return parser
 
 def parse_options(config, parser):
@@ -458,7 +456,6 @@ def parse_options(config, parser):
     config["stopping_criteria"] = args.stopping_criteria
     config["mutation_factor"] = args.mutation_factor
     config["total_jobs"] = args.jobs
-    config["resume"] = args.resume
     return config
 
 if __name__ == "__main__":
