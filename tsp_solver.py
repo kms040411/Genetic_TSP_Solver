@@ -11,6 +11,7 @@ from multiprocessing import Process, Queue
 config = {
     "file_name" : None,             # Target tsp file name
     "Output_file" : "solution.csv", # Output file name
+    "resume" : False,                # Resume from the previous best gene
 
     "population" : 50,              # How many genes are in the pool?
     "fitness_evaluations" : 10000,  # The total number of fitness calculation (The program will exit after calculating beyond this number)
@@ -68,8 +69,8 @@ class Gene():
                 print("No Specified Dimension when Generating a Gene")
                 exit(-1)
             self.dimension = dimension
-            #self.__random_generate()
-            self.__greedy_generate()
+            self.__random_generate()
+            #self.__greedy_generate()
         self.calculated_fitness = self.calc_fitness()
 
     def get_fitness(self):
@@ -125,9 +126,8 @@ class Gene():
     
     # Mutate the gene itself
     # Should be called after crossover()
-    def mutate(self):
+    def mutate(self, mutation_factor=config["mutation_factor"]):
         gene_length = self.dimension
-        mutation_factor = config["mutation_factor"]
         for i in range(mutation_factor):
             mutate_point1 = random.randrange(0, gene_length)
             mutate_point2 = random.randrange(0, gene_length)
@@ -144,9 +144,14 @@ class Gene():
         crossover_point = random.randrange(0, gene_length - 1)
 
         base_list = self.gene[0:crossover_point]
-        for i in other.gene:
-            if i not in base_list:
-                base_list.append(i)
+        base_list_len = crossover_point
+        for i in range(gene_length - 1, -1, -1):
+            if other.gene[i] not in base_list:
+                base_list.append(other.gene[i])
+                base_list_len += 1
+            if base_list_len == gene_length:
+                break
+            
         child = Gene(travel_list=base_list, config=self.config)
         if child.dimension != gene_length:
             print("Crossover: The length of the child is different")
@@ -174,13 +179,49 @@ def threaded_create_random_pool(num, p):
             p.pool.append(new_gene)
 
 class Pool():
-    def __init__(self, config):
+    def __init__(self, config, resume=False):
         self.config = config
         self.lock = threading.Lock()
         self.population = config["population"]
         self.dimension = config["dimension"]
         self.pool = list()
         self.create_random_pool()
+        self.init_generation = 0
+        if resume:
+            self.resume_pool()
+
+    def resume_pool(self):
+        print("Resuming pool from the last gene...")
+        dir_name = "./" + config['file_name'] + "_data"
+        if not os.path.isdir(dir_name):
+            print("There is no previous data")
+            exit(-1)
+        file_list = os.listdir(dir_name)
+        for i in range(0, len(file_list)):
+            file_list[i] = int(file_list[i][10:-4])
+        file_list.sort()
+        last_generation = file_list[-1]
+        fname = "./" + config['file_name'] + "_data/best_gene_" + str(last_generation) + ".csv"
+        last_gene = list()
+        with open(fname, "r") as f:
+            for i in range(self.dimension):
+                line = f.readline().strip()
+                last_gene.append(int(line))
+
+        best_gene = Gene(travel_list=last_gene, config=self.config)
+        print("Previous Best Gene: ", best_gene.get_fitness())
+        '''self.pool.append(best_gene)
+        for i in range(self.population - 1):
+            gene = Gene(travel_list=last_gene[:], config=self.config)
+            gene.mutate(30)
+            self.pool.append(gene)
+        config["convergence_factor"] = config["population"]'''
+
+        self.pool.sort(reverse=True)
+        self.pool[-1] = best_gene
+
+        self.init_generation = last_generation + 1
+        print("Done")
 
     # Multi-threaded func
     def create_random_pool(self):
@@ -188,7 +229,7 @@ class Pool():
         if jobs == 1:
             for i in range(self.population):
                 new_gene = Gene(dimension=self.dimension, config=self.config)
-                print(new_gene.get_fitness())
+                #print(new_gene.get_fitness())
                 self.pool.append(new_gene)
             return
         population_per_job = int(self.population / jobs)
@@ -237,7 +278,7 @@ class Pool():
         return selected_parents
     
     def generation(self):
-        generation = 0
+        generation = self.init_generation
         current_best_gene = None
         population = self.config["population"]
         random_num = population
@@ -255,6 +296,13 @@ class Pool():
                 # Algorithm found better genes
                 stopping_counter = self.config["stopping_criteria"]
                 # @TODO: Save current pool
+                os.makedirs("./" + config['file_name'] + "_data", exist_ok=True)
+                fname = "./" + config['file_name'] + "_data/best_gene_" + str(generation) + ".csv"
+                if current_best_gene is not None:
+                    with open(fname, "w") as f:
+                        for i in current_best_gene.gene:
+                            f.write(str(i) + "\n")
+
             current_best_gene = self.pool[0]
             print("Current Best Gene: ", current_best_gene)
 
@@ -277,7 +325,7 @@ class Pool():
             
             # Check invariant
             if self.population != len(self.pool):
-                print("Population changed")
+                print("Generation: Pool population has been changed")
                 exit(-1)
         return current_best_gene
 
@@ -315,29 +363,6 @@ def fill_distance_table(config):
     dimension = config["dimension"]
     coordinates = config["Coordinates"]
 
-    # Check distance table
-    fname = "./" + config['file_name'] + "_data/distance_table.table"
-    if os.path.isfile(fname):
-        # File exists
-        print("Found & Reading Distance table")
-        with open(fname, "r") as f:
-            delta = 1 / (dimension) * 100
-            progress = 0
-            for i in range(1, dimension + 1):
-                progress += delta
-                print("Progess: ", round(progress, 2), "%", end="")
-                line = f.readline()
-                splited = line.split()
-                j_index = 1
-                for j in splited:
-                    distance = float(j)
-                    table[i - 1][j_index - 1] = distance
-                    table[j_index - 1][i - 1] = distance
-                    j_index += 1
-                print("\r", end="")
-        print("\nDone")
-        return
-
     # Fill distance table
     print("Filling Distance table...")
     delta = 1 / (dimension) * 100
@@ -355,22 +380,6 @@ def fill_distance_table(config):
     print("Done")
     os.makedirs("./" + config['file_name'] + "_data", exist_ok=True)
 
-    # Save distance table
-    print("Saving Distance table...")
-    with open(fname, "w") as f:
-        delta = 1 / (dimension) * 100
-        progress = 0
-        for i in range(1, dimension + 1):
-            progress += delta
-            print("Progess: ", round(progress, 2), "%", end="")
-            line = ""
-            for j in range(1, dimension + 1):
-                line = line + str(table[i - 1][j - 1]) + " "
-            line = line + "\n"
-            print("\r", end="")
-            f.write(line)
-    print("Done")
-
 def build_distance_table(config):
     dimension = config["dimension"]
     print("Building empty table...")
@@ -378,12 +387,12 @@ def build_distance_table(config):
     print("Done")
     config['Distance_table'] = table
     config["table_lock"] = ol.Optimistic_lock()
-    fill_distance_table(config)
+    #fill_distance_table(config)
     return
 
 def ga(config):
     # @TODO: Check whether best pool exists, if so, load it
-    new_pool = Pool(config)
+    new_pool = Pool(config, config["resume"])
     best_gene = new_pool.generation()
     return best_gene
 
@@ -434,6 +443,7 @@ def define_argparse(config):
     parser.add_argument('--criteria', type=int, help="How many generations can pass without improving fitness?", dest="stopping_criteria", default=config["stopping_criteria"])
     parser.add_argument('-m', type=int, help="How many factors of the gene will be mutated? (Per a mutation function called)", dest="mutation_factor", default=config["mutation_factor"])
     parser.add_argument('-j', type=int, help="How many threads will calculate fitness?", dest="jobs", default=config["total_jobs"])
+    parser.add_argument('--resume', help="Resume from the previous best gene", dest="resume", action="store_true", default=False)
     return parser
 
 def parse_options(config, parser):
@@ -448,6 +458,7 @@ def parse_options(config, parser):
     config["stopping_criteria"] = args.stopping_criteria
     config["mutation_factor"] = args.mutation_factor
     config["total_jobs"] = args.jobs
+    config["resume"] = args.resume
     return config
 
 if __name__ == "__main__":
